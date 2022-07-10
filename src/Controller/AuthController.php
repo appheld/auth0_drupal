@@ -18,7 +18,9 @@ if (file_exists(AUTH0_PATH . '/vendor/autoload.php')) {
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Url;
 use Drupal\user\Entity\User;
-use Drupal\user\PrivateTempStoreFactory;
+// use Drupal\user\PrivateTempStoreFactory;
+use Drupal\Core\Database\Connection;
+use Drupal\Core\TempStore\PrivateTempStoreFactory;
 use Drupal\Core\Session\SessionManagerInterface;
 use Drupal\Core\Routing\TrustedRedirectResponse;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
@@ -43,6 +45,7 @@ use Auth0\SDK\JWTVerifier;
 use Auth0\SDK\Auth0;
 use Auth0\SDK\API\Authentication;
 use Auth0\SDK\API\Helpers\State\SessionStateHandler;
+// use Auth0\SDK\Helpers\TransientStoreHandler;
 use Auth0\SDK\Store\SessionStore;
 use GuzzleHttp\Client;
 
@@ -169,7 +172,7 @@ class AuthController extends ControllerBase {
   /**
    * Initialize the controller.
    *
-   * @param \Drupal\user\PrivateTempStoreFactory $temp_store_factory
+   * @param \Drupal\Core\TempStore\PrivateTempStoreFactory $temp_store_factory
    *   The temp store factory.
    * @param \Drupal\Core\Session\SessionManagerInterface $session_manager
    *   The current session.
@@ -194,7 +197,8 @@ class AuthController extends ControllerBase {
     EventDispatcherInterface $event_dispatcher,
     ConfigFactoryInterface $config_factory,
     AuthHelper $auth0_helper,
-    Client $http_client
+    Client $http_client,
+    Connection $connection
   ) {
     // Ensure the pages this controller servers never gets cached.
     $page_cache->trigger();
@@ -217,6 +221,7 @@ class AuthController extends ControllerBase {
     $this->offlineAccess = FALSE || $this->config->get(AuthController::AUTH0_OFFLINE_ACCESS);
     $this->httpClient = $http_client;
     $this->auth0 = FALSE;
+    $this->connection = $connection;
   }
 
   /**
@@ -224,14 +229,15 @@ class AuthController extends ControllerBase {
    */
   public static function create(ContainerInterface $container) {
     return new static(
-        $container->get('user.private_tempstore'),
+        $container->get('tempstore.private'),
         $container->get('session_manager'),
         $container->get('page_cache_kill_switch'),
         $container->get('logger.factory'),
         $container->get('event_dispatcher'),
         $container->get('config.factory'),
         $container->get('auth0.helper'),
-        $container->get('http_client')
+        $container->get('http_client'),
+        $container->get('database')
     );
   }
 
@@ -716,7 +722,7 @@ class AuthController extends ControllerBase {
    * Get the auth0 user profile.
    */
   protected function findAuth0User($id) {
-    $auth0_user = db_select('auth0_user', 'a')
+    $auth0_user = $this->connection->select('auth0_user', 'a')
       ->fields('a', ['drupal_id'])
       ->condition('auth0_id', $id, '=')
       ->execute()
@@ -732,7 +738,7 @@ class AuthController extends ControllerBase {
    *   The user info array.
    */
   protected function updateAuth0User(array $userInfo) {
-    db_update('auth0_user')
+    $this->connection->update('auth0_user')
       ->fields([
         'auth0_object' => serialize($userInfo),
       ])
@@ -929,7 +935,7 @@ class AuthController extends ControllerBase {
    */
   protected function insertAuth0User(array $userInfo, $uid) {
 
-    db_insert('auth0_user')->fields([
+    $this->connection->insert('auth0_user')->fields([
       'auth0_id' => $userInfo['user_id'],
       'drupal_id' => $uid,
       'auth0_object' => json_encode($userInfo),
